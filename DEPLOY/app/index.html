@@ -4500,6 +4500,14 @@ let passformResult = null;
 async function startPassformAnalysis() {
   const url = document.getElementById('passform-url-input').value.trim();
 
+  // Profil-Check: ohne mind. ein Körpermaß macht der Fitcheck keinen Sinn
+  const hasAnyMeasure = _profile.chest_cm || _profile.waist_cm || _profile.hip_cm
+                      || _profile.height_cm || _profile.weight_kg;
+  if (!hasAnyMeasure) {
+    showToast('Bitte fülle zuerst dein Körperprofil aus, damit wir deine Passform berechnen können.');
+    return;
+  }
+
   document.getElementById('passform-input-state').style.display = 'none';
   document.getElementById('passform-result-state').style.display = 'none';
   document.getElementById('passform-loading-state').style.display = 'block';
@@ -4534,12 +4542,13 @@ async function startPassformAnalysis() {
       },
       body: JSON.stringify({
         url,
-        chest: USER_PROFILE.bust,
-        waist: USER_PROFILE.waist,
-        hip: USER_PROFILE.hip,
-        height: USER_PROFILE.height,
-        weight: 62,
-        fit_preference: USER_PROFILE.preferences?.tops ?? 'regular',
+        // ECHTE User-Daten aus Supabase (_profile), nicht der hardcoded USER_PROFILE-Dummy
+        chest:  _profile.chest_cm  || null,
+        waist:  _profile.waist_cm  || null,
+        hip:    _profile.hip_cm    || null,
+        height: _profile.height_cm || null,
+        weight: _profile.weight_kg || null,
+        fit_preference: _profile.fit_tops || 'regular',
       })
     });
 
@@ -4583,12 +4592,36 @@ function showPassformResult(url, data) {
   document.getElementById('res-product-url').innerHTML =
     `<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M5 2H2a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M7.5 1H11v3.5M11 1 5.5 6.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg> ${url.length > 70 ? url.slice(0,67)+'…' : url}`;
 
+  // Status bestimmen
+  const isManual = !!data.manual_entry_required;
+  const isBlocked = !!data.robots_blocked;
+  const hasValidScore = typeof data.fit_score === 'number' && data.fit_score > 0;
+
   document.getElementById('res-rec-size').textContent = data.recommended_size || '–';
   const confEl = document.getElementById('res-rec-conf');
-  const confClass = data.fit_score >= 80 ? 'conf-high' : data.fit_score >= 55 ? 'conf-mid' : 'conf-low';
-  confEl.className = 'fit-rec-confidence ' + confClass;
-  confEl.innerHTML = `<span class="fit-dot" style="background:currentColor;"></span>${data.fit_label}`;
-  document.getElementById('res-rec-reason').textContent = data.advice;
+
+  if (isBlocked) {
+    confEl.className = 'fit-rec-confidence conf-mid';
+    confEl.innerHTML = `<span class="fit-dot" style="background:currentColor;"></span>Shop blockiert Analyse`;
+  } else if (isManual) {
+    confEl.className = 'fit-rec-confidence conf-mid';
+    confEl.innerHTML = `<span class="fit-dot" style="background:currentColor;"></span>Manuelle Eingabe nötig`;
+  } else if (hasValidScore) {
+    const confClass = data.fit_score >= 80 ? 'conf-high' : data.fit_score >= 55 ? 'conf-mid' : 'conf-low';
+    confEl.className = 'fit-rec-confidence ' + confClass;
+    confEl.innerHTML = `<span class="fit-dot" style="background:currentColor;"></span>${data.fit_label || 'Keine Bewertung'}`;
+  } else {
+    confEl.className = 'fit-rec-confidence conf-mid';
+    confEl.innerHTML = `<span class="fit-dot" style="background:currentColor;"></span>Keine Daten gefunden`;
+  }
+
+  // Begründung: Backend-Message bevorzugen, sonst Advice, sonst Fallback
+  document.getElementById('res-rec-reason').textContent =
+    data.message || data.advice || (isBlocked
+      ? `${data.shop_name || 'Dieser Shop'} erlaubt keine automatische Analyse. Gib die Maße aus der Größentabelle bitte manuell ein.`
+      : isManual
+      ? 'Auf dieser Produktseite waren keine Maßangaben in cm zu finden. Gib die Werte bitte manuell ein.'
+      : 'Keine Passform-Empfehlung verfügbar.');
 
   document.getElementById('res-table-size').textContent = data.recommended_size || '–';
   const tbody = document.getElementById('res-measures-body');
